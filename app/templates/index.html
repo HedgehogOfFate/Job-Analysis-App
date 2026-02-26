@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Labor Market Analysis</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/static/style.css?v=3">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Labor Market Analyzer</h1>
+      <p class="subtitle">Discover job trends and insights in real-time</p>
+    </header>
+
+    <div class="search-card">
+      <form id="searchForm">
+        <div class="input-group">
+          <label>What*</label>
+          <input type="text" id="what" placeholder="e.g. Software Engineer"/>
+        </div>
+        <div class="input-group">
+          <label>Where</label>
+          <input type="text" id="where" placeholder="e.g. London, Berlin"/>
+        </div>
+        <div class="input-group">
+          <label>Country*</label>
+          <select id="country">
+            <option value="gb">United Kingdom</option>
+            <option value="us">United States</option>
+            <option value="de">Germany</option>
+            <option value="fr">France</option>
+            <option value="ca">Canada</option>
+            <option value="au">Australia</option>
+            <option value="nl">Netherlands</option>
+            <option value="it">Italy</option>
+            <option value="pl">Poland</option>
+            <option value="in">India</option>
+            <option value="br">Brazil</option>
+            <option value="at">Austria</option>
+            <option value="nz">New Zealand</option>
+            <option value="sg">Singapore</option>
+            <option value="za">South Africa</option>
+          </select>
+        </div>
+        <button type="submit">Search Jobs</button>
+      </form>
+    </div>
+
+    <div class="loading" id="loading">
+      <div class="progress-container">
+        <div class="progress-bar" id="progressBar"></div>
+      </div>
+      <p class="progress-text" id="progressText">Fetching jobs...</p>
+    </div>
+
+    <div id="summary" class="hidden">
+      <div class="stat-card">
+        <div class="stat-label">Total Jobs Found</div>
+        <div class="stat-value" id="totalJobs">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Average Salary</div>
+        <div class="stat-value" id="avgSalary">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Salary Range</div>
+        <div class="stat-value" id="salaryRange">-</div>
+      </div>
+    </div>
+
+    <div class="insights hidden" id="insightsSection">
+      <div class="insights-row">
+        <div class="chart-block chart-half">
+          <h2>Work Type Breakdown</h2>
+          <div class="chart-container chart-container-small">
+            <canvas id="workTypeChart"></canvas>
+          </div>
+        </div>
+        <div class="chart-block chart-half">
+          <h2>Experience Levels</h2>
+          <div class="chart-container chart-container-small">
+            <canvas id="experienceChart"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="charts hidden" id="chartsSection">
+      <div class="chart-block">
+        <h2>Job Distribution by Location</h2>
+        <div class="chart-container">
+          <canvas id="locationChart"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-block">
+        <h2>Top Skills in Demand</h2>
+        <div class="chart-container">
+          <canvas id="skillsChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div class="charts hidden" id="extraChartsSection">
+      <div class="chart-block">
+        <h2>Skills by Category</h2>
+        <div class="chart-container">
+          <canvas id="skillsCategoryChart"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-block">
+        <h2>Average Salary by Location</h2>
+        <div class="chart-container">
+          <canvas id="salaryLocationChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div class="export-section hidden" id="exportSection">
+      <h2>Export Data</h2>
+      <div class="export-buttons">
+        <div class="export-group">
+          <h3>Download Data</h3>
+          <button onclick="downloadData('csv')" class="export-btn">
+            <span></span> CSV
+          </button>
+          <button onclick="downloadData('json')" class="export-btn">
+            <span></span> JSON
+          </button>
+          <button onclick="downloadData('xlsx')" class="export-btn">
+            <span></span> EXCEL
+          </button>
+        </div>
+        <div class="export-group">
+          <h3>Download Charts</h3>
+          <button onclick="downloadChart('location')" class="export-btn">
+            <span></span> Location
+          </button>
+          <button onclick="downloadChart('skills')" class="export-btn">
+            <span></span> Skills
+          </button>
+          <button onclick="downloadChart('work-type')" class="export-btn">
+            <span></span> Work Type
+          </button>
+          <button onclick="downloadChart('experience')" class="export-btn">
+            <span></span> Experience
+          </button>
+          <button onclick="downloadChart('skills-category')" class="export-btn">
+            <span></span> Skills Category
+          </button>
+          <button onclick="downloadChart('salary-location')" class="export-btn">
+            <span></span> Salary/Location
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/main.js?v=3"></script>
+</body>
+</html>
