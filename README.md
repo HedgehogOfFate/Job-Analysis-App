@@ -12,6 +12,7 @@ A web application that fetches job listings from the Adzuna API, analyzes them u
 - **Salary Analysis** — normalization (hourly/monthly to annual), statistics, and per-location breakdown
 - **Interactive Charts** — location distribution, top skills, work type breakdown, experience levels, skills by category, salary by location
 - **Data Export** — CSV, JSON, Excel (.xlsx), and PNG chart downloads for all 6 chart types
+- **Redis Caching** — repeated searches are served instantly from cache, skipping the Adzuna API entirely
 
 ## Tech Stack
 
@@ -19,6 +20,7 @@ A web application that fetches job listings from the Adzuna API, analyzes them u
 |-------|-----------|
 | Backend | FastAPI, Python 3.13 |
 | API Client | httpx (async, connection pooling) |
+| Caching | Redis |
 | Skill Extraction | Regex keyword matching |
 | Charts (server) | matplotlib |
 | Charts (frontend) | Chart.js |
@@ -33,6 +35,7 @@ A web application that fetches job listings from the Adzuna API, analyzes them u
 app/
   main.py                  # FastAPI app, routes, export endpoints
   config.py                # Environment-based configuration
+  cache.py                 # Redis cache client and key builder
   clients/
     adzuna_client.py       # Async Adzuna API client with batched fetching
   analysis/
@@ -59,6 +62,7 @@ tests/
 
 - Python 3.13+
 - Adzuna API credentials ([developer.adzuna.com](https://developer.adzuna.com))
+- Redis (optional but recommended — see [Redis Setup](#redis-setup))
 
 ### Installation
 
@@ -85,10 +89,15 @@ ADZUNA_APP_KEY=your_app_key
 Optional settings (with defaults):
 
 ```env
+# Adzuna
 ADZUNA_RESULTS_PER_PAGE=50
 ADZUNA_BATCH_SIZE=10
 ADZUNA_BATCH_DELAY=0.1
 ADZUNA_MAX_PAGES=50
+
+# Redis
+REDIS_URL=redis://localhost:6379
+REDIS_TTL=3600
 ```
 
 ### Running
@@ -111,6 +120,7 @@ docker compose up --build
 |--------|----------|-------------|
 | `GET` | `/` | Web UI |
 | `GET` | `/api/search?what=...&country=...&where=...` | Search and analyze jobs |
+| `GET` | `/api/search/cache/clear?what=...&country=...&where=...` | Invalidate a cached search result |
 | `GET` | `/api/export/csv` | Download analysis as CSV |
 | `GET` | `/api/export/json` | Download analysis as JSON |
 | `GET` | `/api/export/xlsx` | Download analysis as Excel |
@@ -120,15 +130,15 @@ docker compose up --build
 | `GET` | `/api/export/chart/experience` | Download experience level chart (PNG) |
 | `GET` | `/api/export/chart/skills-category` | Download skills by category chart (PNG) |
 | `GET` | `/api/export/chart/salary-location` | Download salary by location chart (PNG) |
-| `GET` | `/health` | Health check |
+| `GET` | `/health` | Health check (includes Redis status) |
 
 ### Search Response Shape
 
 ```json
 {
   "total_jobs": 450,
-  "jobs_by_location": {"London": 120, "Manchester": 45, ...},
-  "top_skills": [["Python", 180], ["SQL", 140], ...],
+  "jobs_by_location": {"London": 120, "Manchester": 45},
+  "top_skills": [["Python", 180], ["SQL", 140]],
   "skills_by_category": {
     "Languages": [["Python", 180], ["Java", 90]],
     "Cloud & DevOps": [["AWS", 110], ["Docker", 85]]
@@ -139,6 +149,17 @@ docker compose up --build
   "salary_by_location": {
     "London": {"avg": 70000, "min": 35000, "max": 120000, "count": 80}
   }
+}
+```
+
+### Health Check Response
+
+```json
+{
+  "status": "healthy",
+  "adzuna_configured": true,
+  "last_search_available": true,
+  "redis_available": true
 }
 ```
 

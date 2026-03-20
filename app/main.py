@@ -9,6 +9,7 @@ from .clients.adzuna_client import AdzunaClient
 from .analysis.skill_extractor import SkillExtractor
 from .analysis.analyzer import JobAnalyzer
 from .exporter.exporter import DataExporter, ChartExporter
+from .cache import cache, make_search_cache_key
 from . import config
 
 logging.basicConfig(
@@ -40,10 +41,16 @@ last_search_result = {}
 last_search_country = ""
 
 
+@app.on_event("startup")
+async def startup_event():
+    await cache.connect()
+
+
 @app.on_event("shutdown")
 async def shutdown_event():
     await adzuna.close()
-    logger.info("Application shutdown: closed HTTP client")
+    await cache.close()
+    logger.info("Application shutdown: closed HTTP client and Redis connection")
 
 
 @app.exception_handler(Exception)
@@ -60,7 +67,6 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-
     try:
         return templates.TemplateResponse("index.html", {"request": request})
     except Exception as e:
@@ -78,7 +84,6 @@ async def api_search(
         country: Optional[str] = None,
         fetch_all: bool = True
 ):
-
     global last_search_result, last_search_country
 
     if not config.ADZUNA_APP_ID or not config.ADZUNA_APP_KEY:
@@ -113,6 +118,16 @@ async def api_search(
     try:
         logger.info(f"Starting job search: what={what}, where={where}, country={country}, fetch_all={fetch_all}")
 
+        # --- Cache check ---
+        cache_key = make_search_cache_key(what, where, country)
+        cached_result = await cache.get(cache_key)
+        if cached_result:
+            last_search_result = cached_result
+            last_search_country = country.lower()
+            logger.info(f"Returning cached result for key: {cache_key}")
+            return JSONResponse(content=cached_result)
+
+        # --- Cache miss: fetch from Adzuna ---
         if fetch_all:
             jobs = await adzuna.search_all_jobs(
                 what=what,
@@ -166,6 +181,9 @@ async def api_search(
                 detail="Failed to analyze job data. Please try again."
             )
 
+        # --- Store result in cache ---
+        await cache.set(cache_key, result)
+
         return JSONResponse(content=result)
 
     except HTTPException:
@@ -188,6 +206,35 @@ async def api_search(
         )
 
 
+@app.get("/api/search/cache/clear")
+async def clear_search_cache(what: str = "", where: str = "", country: str = ""):
+    if not what or not country:
+        raise HTTPException(status_code=400, detail="'what' and 'country' parameters are required.")
+    key = make_search_cache_key(what, where, country)
+    deleted = await cache.delete(key)
+    if deleted:
+        return JSONResponse(content={"message": f"Cache cleared for key: {key}"})
+    raise HTTPException(status_code=404, detail="Key not found in cache or Redis unavailable.")
+
+
+@app.get("/health")
+async def health_check():
+    try:
+        health_status = {
+            "status": "healthy",
+            "adzuna_configured": bool(config.ADZUNA_APP_ID and config.ADZUNA_APP_KEY),
+            "last_search_available": bool(last_search_result),
+            "redis_available": cache.available,
+        }
+        return JSONResponse(content=health_status)
+    except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unhealthy", "error": str(e)}
+        )
+
+
 @app.get("/api/export/csv")
 async def export_csv():
     if not last_search_result:
@@ -204,7 +251,6 @@ async def export_csv():
         if not csv_data:
             raise ValueError("Generated CSV data is empty")
 
-        logger.info("CSV export generated successfully")
         return Response(
             content=csv_data,
             media_type="text/csv",
@@ -215,36 +261,6 @@ async def export_csv():
         raise HTTPException(
             status_code=500,
             detail="Failed to generate CSV file. Please try again."
-        )
-
-
-@app.get("/api/export/json")
-async def export_json():
-    if not last_search_result:
-        logger.warning("JSON export attempted without search results")
-        raise HTTPException(
-            status_code=400,
-            detail="No search results available. Please perform a search first."
-        )
-
-    try:
-        logger.info("Generating JSON export")
-        json_data = DataExporter.to_json(last_search_result)
-
-        if not json_data:
-            raise ValueError("Generated JSON data is empty")
-
-        logger.info("JSON export generated successfully")
-        return Response(
-            content=json_data,
-            media_type="application/json",
-            headers={"Content-Disposition": "attachment; filename=job_analysis.json"}
-        )
-    except Exception as e:
-        logger.error(f"Error generating JSON export: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to generate JSON file. Please try again."
         )
 
 
@@ -264,7 +280,6 @@ async def export_xlsx():
         if not xlsx_data:
             raise ValueError("Generated Excel data is empty")
 
-        logger.info("Excel export generated successfully")
         return Response(
             content=xlsx_data,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -291,26 +306,21 @@ async def export_location_chart():
         location_data = last_search_result.get('jobs_by_location', {})
 
         if not location_data:
-            logger.warning("Location chart export attempted with no location data")
             raise HTTPException(
                 status_code=400,
-                detail="No location data available. This might happen when searching without specifying a location. Try searching with a city or region specified."
+                detail="No location data available. Try searching with a city or region specified."
             )
 
         if sum(location_data.values()) == 0:
-            logger.warning("Location chart export attempted with empty location counts")
             raise HTTPException(
                 status_code=400,
                 detail="Location data is empty. Please perform a search with results first."
             )
 
-        logger.info(f"Generating location chart with {len(location_data)} locations")
         chart_data = ChartExporter.create_location_chart(location_data)
-
         if not chart_data:
             raise ValueError("Generated chart data is empty")
 
-        logger.info("Location chart generated successfully")
         return Response(
             content=chart_data,
             media_type="image/png",
@@ -320,45 +330,23 @@ async def export_location_chart():
         raise
     except Exception as e:
         logger.error(f"Error generating location chart: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to generate location chart. Please try again."
-        )
+        raise HTTPException(status_code=500, detail="Failed to generate location chart. Please try again.")
 
 
 @app.get("/api/export/chart/skills")
 async def export_skills_chart():
     if not last_search_result:
-        logger.warning("Skills chart export attempted without search results")
-        raise HTTPException(
-            status_code=400,
-            detail="No search results available. Please perform a search first."
-        )
+        raise HTTPException(status_code=400, detail="No search results available. Please perform a search first.")
 
     try:
         skills_data = last_search_result.get('top_skills')
-
         if not skills_data:
-            logger.warning("Skills chart export attempted with no skills data")
-            raise HTTPException(
-                status_code=400,
-                detail="No skills data available. Please perform a search first."
-            )
+            raise HTTPException(status_code=400, detail="No skills data available. Please perform a search first.")
 
-        if len(skills_data) == 0:
-            logger.warning("Skills chart export attempted with empty skills list")
-            raise HTTPException(
-                status_code=400,
-                detail="No skills found in the current search results."
-            )
-
-        logger.info(f"Generating skills chart with {len(skills_data)} skills")
         chart_data = ChartExporter.create_skills_chart(skills_data)
-
         if not chart_data:
             raise ValueError("Generated chart data is empty")
 
-        logger.info("Skills chart generated successfully")
         return Response(
             content=chart_data,
             media_type="image/png",
@@ -368,10 +356,7 @@ async def export_skills_chart():
         raise
     except Exception as e:
         logger.error(f"Error generating skills chart: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to generate skills chart. Please try again."
-        )
+        raise HTTPException(status_code=500, detail="Failed to generate skills chart. Please try again.")
 
 
 @app.get("/api/export/chart/work-type")
@@ -444,7 +429,6 @@ async def export_salary_location_chart():
         if not data:
             raise HTTPException(status_code=400, detail="No salary by location data available.")
 
-        from .exporter.exporter import DataExporter
         currency = DataExporter.get_currency_symbol(last_search_country) if last_search_country else '€'
         chart_data = ChartExporter.create_salary_location_chart(data, currency=currency)
         return Response(content=chart_data, media_type="image/png",
@@ -454,20 +438,3 @@ async def export_salary_location_chart():
     except Exception as e:
         logger.error(f"Error generating salary location chart: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to generate salary location chart.")
-
-
-@app.get("/health")
-async def health_check():
-    try:
-        health_status = {
-            "status": "healthy",
-            "adzuna_configured": bool(config.ADZUNA_APP_ID and config.ADZUNA_APP_KEY),
-            "last_search_available": bool(last_search_result)
-        }
-        return JSONResponse(content=health_status)
-    except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
-        return JSONResponse(
-            status_code=503,
-            content={"status": "unhealthy", "error": str(e)}
-        )
